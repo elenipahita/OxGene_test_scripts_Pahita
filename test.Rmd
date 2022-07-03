@@ -1,0 +1,125 @@
+---
+title: "OxGeneTask"
+author: "Eleni Pahita"
+date: "26/02/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(Biostrings)
+library(rtracklayer)
+library(GenomicRanges)
+library(biomaRt)
+library(dplyr)
+library(seqLogo)
+
+#import amplicon sequences
+setwd("~/Desktop/OxGene//") #directory where all files are
+files <- list.files(path = ".", pattern = "amplicon_[1,2,3].fa.gz")
+amplicons.fa <- lapply(files,readDNAStringSet)
+names(amplicons.fa) <- gsub(".fa.gz","",files)
+amplicons.df <- lapply(amplicons.fa,as.vector)
+
+#import genome sequence
+genome.fa <- readDNAStringSet("genome.fa.gz")
+
+#import amplicon coordinates and adjust width since importing bedfile misses first base
+amplicon.coord <- import.bed("amplicon_coordinates.bed")
+amplicon.coord <- GenomicRanges::resize(amplicon.coord,width=c(70,60,60),fix="end")
+overlap.nts <- data.frame(amplicon.coord)[1,"start"]-data.frame(amplicon.coord)[2,"start"] #shift in amplicon 1 vs amplicon 2
+
+ref.sequence <- as.vector(genome.fa[amplicon.coord]) #extract genome sequences for amplicon locations
+
+#identify amplicon genes 
+#convert gene coordinates to gene name
+mart<-useEnsembl(biomart='ensembl', 
+                     dataset="hsapiens_gene_ensembl") 
+
+gene.names <- data.frame(name = c("amplicon_1","amplicon_2","amplicon_3"),hgnc_symbol = c(0,0,0))
+for (i in 1:length(amplicon.coord)){
+gene.names[i,2] <- getBM(attributes = c("hgnc_symbol", "chromosome_name", 
+                                     "start_position", "end_position"), 
+                 filters = c("chromosome_name", "start", "end"),
+                 values = list(as.data.frame(amplicon.coord)[i,1],
+                               as.data.frame(amplicon.coord)[i,2],
+                               as.data.frame(amplicon.coord)[i,3]),
+                 mart = mart)$hgnc_symbol[1]
+}
+
+
+
+single.characters <- function(a) {
+  unlist(strsplit(as.character(a),split=""))
+  } #from sequence string to single characters
+
+
+#write function to find mutations and write table with mutation in each sequence
+find.mismatches <- function(x,y) { #x is amplicon DNAstring and y is genome reference sequence
+mutations.df <- data.frame()
+  amplicon.df <- as.data.frame(x)
+     mismatch <- function(c,d){
+      mismatch.index<-which(single.characters(c) != single.characters(d))
+       if (length(mismatch.index) > 0) { #write a table with which sequence contains the mismatch, and what the nt substitution is
+   a <- data.frame("position"=mismatch.index,
+                   "genome.nt"=single.characters(d)[mismatch.index],
+                   "mutation.nt"=single.characters(c)[mismatch.index],
+                   "mutation.sequence"= as.character(c))
+   return(a)
+     } 
+     }
+    mutations.df <- do.call(rbind.data.frame,apply(amplicon.df,1,mismatch,y))
+    
+return(mutations.df)
+}
+
+#edit data frame to show info needed
+mutations.df <- do.call(rbind.data.frame,mapply(find.mismatches,amplicons.fa,ref.sequence,SIMPLIFY = F)) %>%
+  mutate(name=gsub("\\..*","",rownames(.))) %>%
+  mutate(new.position = ifelse(name=="amplicon_1",(position+overlap.nts),position)) %>% #change amplicon 1 position to corr amplicon 2 position
+  left_join(data.frame(gene.names[,c("name","hgnc_symbol")])) %>%
+  mutate(mutation = paste0(genome.nt,"->",mutation.nt)) %>%
+  add_count(mutation,new.position,hgnc_symbol) %>%
+  distinct(hgnc_symbol,mutation,n,mutation.sequence) %>% 
+  mutate(referenceSequence = as.character(ref.sequence)) %>%
+  slice(-2) %>% #since amplicon1 and 2 are overlapping and have same mutation, drop amplicon2 info
+  mutate(mutation.frequency = n/c(400,200)) %>%
+  relocate(hgnc_symbol,mutation,mutation.frequency,n,referenceSequence,mutation.sequence)%>%
+  write.csv(.,"amplicon1.2.3.mutation.info.csv")
+
+#seqLogo
+DNAtoSeqLogo <-function(x){
+  freq.matrix <- consensusMatrix(x,as.prob=T)[1:4,]
+  seqLogo(makePWM(freq.matrix),ic.scale=T)
+}
+
+seqLogos <- lapply(amplicons.fa,DNAtoSeqLogo)
+
+
+```
+#amplicon3_2
+```{r}
+setwd("~/Desktop/OxGene") #directory where all files are
+
+  amplicon3_2 <- list(readDNAStringSet("amplicon_3.test_2.fa.gz")) #function is written to accept list as input so convert amplicon3_2 to list of length 2
+  names(amplicon3_2) <- "amplicon_3"
+  
+ampl3_2.mutations <- find.mismatches(amplicon3_2,(ref.sequence[3])) %>% 
+  mutate(name="amplicon_3")%>%
+  left_join(data.frame(gene.names[,c("name","hgnc_symbol")])) %>%
+  mutate(mutation = paste0(genome.nt,"->",mutation.nt)) %>%
+  add_count(mutation,position,hgnc_symbol) %>%
+  distinct(hgnc_symbol,mutation,n,mutation.sequence) %>% 
+  mutate(referenceSequence = as.character(ref.sequence[[3]])) %>%
+  mutate(mutation.frequency = n/length(amplicon3_2[[1]])) %>%
+  relocate(hgnc_symbol,mutation,mutation.frequency,n,referenceSequence,mutation.sequence) %>%
+  write.csv(.,"amplicon3_2.mutation.info.csv")
+  
+seqLogos <- lapply(amplicon3_2,DNAtoSeqLogo)
+
+
+```
+
+
+
