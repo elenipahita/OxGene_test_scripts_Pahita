@@ -7,7 +7,7 @@ output:
   pdf_document: default
 ---
 
-```{r setup, include=FALSE}
+```{r setup,error=FALSE, message=FALSE,warning=FALSE }
 library(Biostrings)
 library(rtracklayer)
 library(GenomicRanges)
@@ -99,7 +99,7 @@ seqLogos <- lapply(amplicons.fa,DNAtoSeqLogo)
 
 ```
 #amplicon3_2
-```{r}
+```{r,error=FALSE, message=FALSE,warning=FALSE}
 setwd("~/Desktop/OxGene") #directory where all files are
 
   amplicon3_2 <- list(readDNAStringSet("amplicon_3.test_2.fa.gz")) #function is written to accept list as input so convert amplicon3_2 to list of length 2
